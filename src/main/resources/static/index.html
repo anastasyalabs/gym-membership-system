@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gym Membership System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen bg-[#050816] text-slate-950 antialiased">
+
+<div class="min-h-screen w-full bg-[#050816] sm:flex sm:items-center sm:justify-center sm:p-6">
+
+    <div class="relative mx-auto min-h-screen w-full max-w-[430px] overflow-hidden bg-[#f8f3ff] shadow-2xl sm:min-h-[900px] sm:rounded-[2.5rem]">
+
+        <div class="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-violet-300/70 blur-3xl"></div>
+        <div class="pointer-events-none absolute -left-28 top-64 h-80 w-80 rounded-full bg-fuchsia-200/70 blur-3xl"></div>
+        <div class="pointer-events-none absolute bottom-10 right-0 h-64 w-64 rounded-full bg-indigo-200/50 blur-3xl"></div>
+
+        <header class="relative px-5 pb-4 pt-6">
+            <div class="mb-5 flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-slate-500">Welcome back</p>
+                    <h1 class="text-2xl font-black tracking-tight text-slate-950" id="headerUserName">Anna</h1>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <select id="roleSelect"
+                            class="rounded-full border border-white/70 bg-white/80 px-3 py-2 text-xs font-black text-slate-700 shadow-lg shadow-violet-100 outline-none">
+                        <option value="MEMBER">Member</option>
+                        <option value="ADMIN">Admin</option>
+                    </select>
+
+                    <div class="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-lg shadow-violet-200/60">
+                        <span class="text-lg font-black text-violet-600">G</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-hidden rounded-[2rem] bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-400 p-5 text-white shadow-xl shadow-violet-300/50">
+                <div class="relative">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <p class="text-sm text-white/75">Current plan</p>
+                            <p class="mt-2 text-4xl font-black leading-none" id="heroPlanName">Premium</p>
+                        </div>
+
+                        <span id="heroStatusBadge" class="rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur">
+                            ACTIVE
+                        </span>
+                    </div>
+
+                    <div class="mt-6 grid grid-cols-3 gap-3">
+                        <div class="rounded-2xl bg-white/15 p-3 backdrop-blur">
+                            <p class="text-xs text-white/70">Visits</p>
+                            <p class="mt-1 text-lg font-bold" id="heroVisitCount">0</p>
+                        </div>
+
+                        <div class="rounded-2xl bg-white/15 p-3 backdrop-blur">
+                            <p class="text-xs text-white/70">Classes</p>
+                            <p class="mt-1 text-lg font-bold" id="heroRegisteredClasses">0</p>
+                        </div>
+
+                        <div class="rounded-2xl bg-white/15 p-3 backdrop-blur">
+                            <p class="text-xs text-white/70">Expires</p>
+                            <p class="mt-1 text-sm font-bold" id="heroPlanExpires">31 May</p>
+                        </div>
+                    </div>
+
+                    <button class="mt-5 w-full rounded-2xl bg-white px-4 py-4 text-sm font-black text-violet-700 shadow-lg shadow-violet-600/20"
+                            data-go="checkin">
+                        Check in to gym
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="relative px-5 pb-28">
+
+            <section id="homePage" class="app-page">
+                <div class="mb-4 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xl font-black text-slate-950">Home</h2>
+                        <p class="text-sm text-slate-500">Your membership overview</p>
+                    </div>
+                </div>
+
+                <div class="mb-5 grid grid-cols-2 gap-3">
+                    <article class="rounded-3xl bg-white p-4 shadow-lg shadow-violet-100">
+                        <p class="text-xs font-semibold text-slate-400">This month</p>
+                        <p class="mt-2 text-3xl font-black" id="monthVisitCount">0</p>
+                        <p class="mt-1 text-xs text-slate-400">gym visits</p>
+                    </article>
+
+                    <article class="rounded-3xl bg-white p-4 shadow-lg shadow-violet-100">
+                        <p class="text-xs font-semibold text-slate-400">Next class</p>
+                        <p class="mt-2 text-3xl font-black text-violet-600" id="nextClassShort">—</p>
+                        <p class="mt-1 text-xs text-slate-400">upcoming</p>
+                    </article>
+                </div>
+
+                <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h3 class="font-black text-slate-950">Membership status</h3>
+                            <p class="text-sm text-slate-500">Access depends on subscription status</p>
+                        </div>
+
+                        <span id="homeStatusBadge" class="rounded-full px-3 py-1 text-xs font-black"></span>
+                    </div>
+
+                    <div class="rounded-3xl bg-slate-100 p-4">
+                        <p class="text-xs font-bold uppercase tracking-wide text-slate-400">Current subscription</p>
+                        <div class="mt-2 flex items-end justify-between">
+                            <div>
+                                <p class="text-2xl font-black" id="homePlanName">Premium</p>
+                                <p class="text-sm text-slate-500" id="homePlanDetails">€45 / 30 days</p>
+                            </div>
+
+                            <button class="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black text-white"
+                                    data-go="account">
+                                Change
+                            </button>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h3 class="font-black text-slate-950">Upcoming training</h3>
+                            <p class="text-sm text-slate-500">Your next available class</p>
+                        </div>
+
+                        <button class="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700"
+                                data-go="classes">
+                            View all
+                        </button>
+                    </div>
+
+                    <div id="nextSessionCard"></div>
+                </article>
+
+                <article id="adminShortcutCard" class="hidden rounded-[2rem] bg-slate-950 p-5 text-white shadow-lg shadow-slate-300">
+                    <div class="flex items-center justify-between gap-4">
+                        <div>
+                            <h3 class="font-black">Admin gate code</h3>
+                            <p class="mt-1 text-sm text-white/60">Open current check-in code page.</p>
+                        </div>
+
+                        <button class="rounded-2xl bg-white px-4 py-3 text-xs font-black text-slate-950"
+                                data-go="admin">
+                            Open
+                        </button>
+                    </div>
+                </article>
+            </section>
+
+            <section id="checkinPage" class="app-page hidden">
+                <div class="mb-4">
+                    <h2 class="text-xl font-black text-slate-950">Gym Check-in</h2>
+                    <p class="text-sm text-slate-500">Enter the current access code from gym staff</p>
+                </div>
+
+                <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <div class="mb-5 rounded-[2rem] bg-gradient-to-br from-slate-950 to-violet-950 p-5 text-white">
+                        <p class="text-sm text-white/60">Today</p>
+                        <p class="mt-1 text-2xl font-black" id="checkinDateLabel">—</p>
+                        <p class="mt-3 text-sm text-white/70">
+                            The access code changes every minute. Only administrators can see the current code.
+                        </p>
+                    </div>
+
+                    <label for="checkinCodeInput" class="mb-2 block text-xs font-black uppercase tracking-wide text-slate-400">
+                        Access code
+                    </label>
+
+                    <input id="checkinCodeInput"
+                           type="text"
+                           inputmode="numeric"
+                           maxlength="6"
+                           placeholder="Enter 6-digit code"
+                           class="mb-4 w-full rounded-3xl bg-slate-100 px-5 py-4 text-center text-2xl font-black tracking-[0.4em] outline-none focus:ring-2 focus:ring-violet-300">
+
+                    <button id="checkinSubmitButton"
+                            class="w-full rounded-3xl bg-violet-600 px-5 py-4 text-sm font-black text-white shadow-lg shadow-violet-200">
+                        Confirm check-in
+                    </button>
+
+                    <p id="checkinMessage" class="mt-4 hidden rounded-2xl px-4 py-3 text-sm font-bold"></p>
+                </article>
+
+                <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <h3 class="mb-4 font-black text-slate-950">Recent check-ins</h3>
+                    <div id="recentVisitsList" class="space-y-3"></div>
+                </article>
+            </section>
+
+            <section id="calendarPage" class="app-page hidden">
+                <div class="mb-4">
+                    <h2 class="text-xl font-black text-slate-950">Visit Calendar</h2>
+                    <p class="text-sm text-slate-500">Days and times when you visited the gym</p>
+                </div>
+
+                <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <div class="mb-4 flex items-center justify-between">
+                        <h3 class="font-black text-slate-950" id="calendarTitle">Calendar</h3>
+                        <span class="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
+                            Visits marked
+                        </span>
+                    </div>
+
+                    <div class="mb-3 grid grid-cols-7 gap-1 text-center text-xs font-black text-slate-400">
+                        <span>Sun</span>
+                        <span>Mon</span>
+                        <span>Tue</span>
+                        <span>Wed</span>
+                        <span>Thu</span>
+                        <span>Fri</span>
+                        <span>Sat</span>
+                    </div>
+
+                    <div id="calendarGrid" class="grid grid-cols-7 gap-2"></div>
+                </article>
+
+                <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <h3 class="mb-4 font-black text-slate-950">Visits this month</h3>
+                    <div id="monthVisitsList" class="space-y-3"></div>
+                </article>
+            </section>
+
+            <section id="classesPage" class="app-page hidden">
+                <div class="mb-4">
+                    <h2 class="text-xl font-black text-slate-950">Group Training</h2>
+                    <p class="text-sm text-slate-500">Register for available training sessions</p>
+                </div>
+
+                <div id="classesList" class="space-y-4"></div>
+            </section>
+
+            <section id="accountPage" class="app-page hidden">
+                <div class="mb-4">
+                    <h2 class="text-xl font-black text-slate-950">Account</h2>
+                    <p class="text-sm text-slate-500">Profile, subscription and plan settings</p>
+                </div>
+
+                <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <div class="flex items-center gap-4">
+                        <div class="flex h-16 w-16 items-center justify-center rounded-3xl bg-violet-100 text-2xl font-black text-violet-700">
+                            A
+                        </div>
+
+                        <div>
+                            <h3 class="text-xl font-black text-slate-950" id="accountName">Anna Smith</h3>
+                            <p class="text-sm text-slate-500" id="accountEmail">anna.smith@example.com</p>
+                            <div class="mt-2" id="accountStatusBadge"></div>
+                        </div>
+                    </div>
+                </article>
+
+                <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <h3 class="mb-4 font-black text-slate-950">Choose plan</h3>
+                    <div id="accountPlansList" class="space-y-3"></div>
+                </article>
+
+                <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <h3 class="mb-4 font-black text-slate-950">Useful actions</h3>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <button class="rounded-2xl bg-violet-100 px-4 py-4 text-left text-sm font-black text-violet-700"
+                                data-go="calendar">
+                            View visits
+                        </button>
+
+                        <button class="rounded-2xl bg-slate-950 px-4 py-4 text-left text-sm font-black text-white"
+                                data-go="classes">
+                            Book class
+                        </button>
+                    </div>
+
+                    <button id="adminPanelButton"
+                            class="mt-3 hidden w-full rounded-2xl bg-amber-100 px-4 py-4 text-left text-sm font-black text-amber-800"
+                            data-go="admin">
+                        Open admin gate code
+                    </button>
+                </article>
+            </section>
+
+            <section id="adminPage" class="app-page hidden">
+                <div class="mb-4">
+                    <h2 class="text-xl font-black text-slate-950">Admin Gate Code</h2>
+                    <p class="text-sm text-slate-500">Current code for gym entrance check-in</p>
+                </div>
+
+                <article class="mb-5 rounded-[2rem] bg-slate-950 p-5 text-white shadow-lg shadow-slate-300">
+                    <p class="text-sm text-white/60">Current access code</p>
+                    <p class="mt-3 text-center text-5xl font-black tracking-[0.25em]" id="adminCurrentCode">000000</p>
+
+                    <div class="mt-5">
+                        <div class="mb-2 flex items-center justify-between text-xs font-bold text-white/60">
+                            <span>Code refresh</span>
+                            <span id="codeTimerLabel">60s</span>
+                        </div>
+
+                        <div class="h-3 overflow-hidden rounded-full bg-white/10">
+                            <div id="codeTimerBar" class="h-full rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-300"></div>
+                        </div>
+                    </div>
+
+                    <p class="mt-5 text-sm text-white/60">
+                        In the real backend this code must be generated on the server side, not in frontend JavaScript.
+                    </p>
+                </article>
+
+                <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                    <h3 class="mb-4 font-black text-slate-950">Today’s attendance</h3>
+                    <div id="adminAttendanceList" class="space-y-3"></div>
+                </article>
+            </section>
+
+        </main>
+
+        <nav class="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-[430px] border-t border-white/70 bg-white/90 px-4 pb-5 pt-3 shadow-2xl backdrop-blur sm:absolute sm:rounded-b-[2.5rem]">
+            <div class="grid grid-cols-5 gap-2">
+                <button class="nav-button rounded-2xl px-2 py-2 text-xs font-bold" data-page="home">
+                    <span class="block text-lg">⌂</span>
+                    Home
+                </button>
+
+                <button class="nav-button rounded-2xl px-2 py-2 text-xs font-bold" data-page="checkin">
+                    <span class="block text-lg">↳</span>
+                    Entry
+                </button>
+
+                <button class="nav-button rounded-2xl px-2 py-2 text-xs font-bold" data-page="calendar">
+                    <span class="block text-lg">□</span>
+                    Calendar
+                </button>
+
+                <button class="nav-button rounded-2xl px-2 py-2 text-xs font-bold" data-page="classes">
+                    <span class="block text-lg">✚</span>
+                    Classes
+                </button>
+
+                <button class="nav-button rounded-2xl px-2 py-2 text-xs font-bold" data-page="account">
+                    <span class="block text-lg">☻</span>
+                    Account
+                </button>
+            </div>
+        </nav>
+
+        <div id="toast"
+             class="pointer-events-none fixed left-1/2 top-6 z-30 hidden w-[90%] max-w-[380px] -translate-x-1/2 rounded-3xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white shadow-2xl sm:absolute">
+        </div>
+
+    </div>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>
