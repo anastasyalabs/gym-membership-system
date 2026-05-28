@@ -1,2 +1,4 @@
-package com.gym.gym_membership_system.service;public class UserAccountService {
+package com.gym.gym_membership_system.service;
+
+public class UserAccountService {
 }
