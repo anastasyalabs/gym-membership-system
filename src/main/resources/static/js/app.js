@@ -10,9 +10,13 @@ let plans = [];
 let sessions = [];
 let subscriptions = [];
 let registrations = [];
+let adminSessions = [];
+let adminSessionRegistrations = {};
 
 // Attendance/check-in is not available in the current backend API contract.
 let visitRecords = [];
+let adminMembers = [];
+let adminAttendance = [];
 
 function readAuthSession() {
     try {
@@ -32,6 +36,20 @@ function saveAuthSession(session) {
 function clearAuthSession() {
     authSession = null;
     localStorage.removeItem("gymAuthSession");
+}
+
+function logout() {
+    clearAuthSession();
+    currentUser = null;
+    subscriptions = [];
+    registrations = [];
+    visitRecords = [];
+
+    showToast("Logged out successfully");
+
+    setTimeout(() => {
+        location.reload();
+    }, 700);
 }
 
 async function apiRequest(url, options = {}) {
@@ -102,6 +120,20 @@ function encodeEmail() {
     return encodeURIComponent(authSession.email);
 }
 
+function getCurrentRole() {
+    return authSession && authSession.role
+        ? String(authSession.role).trim().toUpperCase()
+        : "";
+}
+
+function isAdminUser() {
+    return getCurrentRole() === "ADMIN";
+}
+
+function isMemberUser() {
+    return getCurrentRole() === "MEMBER";
+}
+
 function formatDateTimePart(dateTime, part) {
     if (!dateTime) {
         return "—";
@@ -144,9 +176,8 @@ function buildPlanFeatures(apiPlan) {
 }
 
 function normalizeSession(apiSession) {
-    const isRegistered = registrations.some(registration =>
-        registration.sessionId === apiSession.id && registration.status === "REGISTERED"
-    );
+    const registration = findRegistrationBySessionId(apiSession.id);
+    const isRegistered = Boolean(registration);
 
     const registeredCount = Number(apiSession.registeredCount || 0);
     const availablePlaces =
@@ -165,8 +196,15 @@ function normalizeSession(apiSession) {
         booked: Math.max(0, apiSession.capacity - availablePlaces),
         availablePlaces,
         status: apiSession.status,
-        registered: isRegistered
+        registered: isRegistered,
+        registrationId: registration ? registration.id : null
     };
+}
+
+function findRegistrationBySessionId(sessionId) {
+    return registrations.find(registration =>
+        registration.sessionId === sessionId && registration.status === "REGISTERED"
+    );
 }
 
 function getActiveSubscription() {
@@ -217,26 +255,106 @@ async function loadMemberData() {
 
     const email = encodeEmail();
 
-    const [profileData, subscriptionData, registrationData] = await Promise.all([
+    const [profileData, subscriptionData, registrationData, visitData] = await Promise.all([
         apiGet(`/api/member/profile?email=${email}`),
         apiGet(`/api/member/subscriptions/my?email=${email}`),
-        apiGet(`/api/member/registrations/my?email=${email}`)
+        apiGet(`/api/member/registrations/my?email=${email}`),
+        apiGet(`/api/member/visits?email=${email}`)
     ]);
 
     subscriptions = Array.isArray(subscriptionData) ? subscriptionData : [];
     registrations = Array.isArray(registrationData) ? registrationData : [];
+    visitRecords = Array.isArray(visitData) ? visitData : [];
     currentUser = buildCurrentUser(profileData);
 
     const sessionsData = await apiGet("/api/public/sessions");
     sessions = sessionsData.map(normalizeSession);
 }
 
+function configureNavigationForRole() {
+    const buttons = document.querySelectorAll(".nav-button");
+
+    if (buttons.length < 5) {
+        return;
+    }
+
+    if (isAdminUser()) {
+        buttons[0].dataset.page = "home";
+        buttons[0].innerHTML = `<span class="block text-lg">⌂</span>Dash`;
+
+        buttons[1].dataset.page = "admin";
+        buttons[1].innerHTML = `<span class="block text-lg">#</span>Code`;
+
+        buttons[2].dataset.page = "calendar";
+        buttons[2].innerHTML = `<span class="block text-lg">□</span>Visits`;
+
+        buttons[3].dataset.page = "classes";
+        buttons[3].innerHTML = `<span class="block text-lg">✚</span>Sessions`;
+
+        buttons[4].dataset.page = "account";
+        buttons[4].innerHTML = `<span class="block text-lg">☻</span>Admin`;
+
+        return;
+    }
+
+    buttons[0].dataset.page = "home";
+    buttons[0].innerHTML = `<span class="block text-lg">⌂</span>Home`;
+
+    buttons[1].dataset.page = "checkin";
+    buttons[1].innerHTML = `<span class="block text-lg">↳</span>Entry`;
+
+    buttons[2].dataset.page = "calendar";
+    buttons[2].innerHTML = `<span class="block text-lg">□</span>Calendar`;
+
+    buttons[3].dataset.page = "classes";
+    buttons[3].innerHTML = `<span class="block text-lg">✚</span>Classes`;
+
+    buttons[4].dataset.page = "account";
+    buttons[4].innerHTML = `<span class="block text-lg">☻</span>Account`;
+}
+
+async function loadAdminData() {
+    if (!isAdminUser()) {
+        return;
+    }
+
+    const [membersData, sessionsData, attendanceData] = await Promise.all([
+        apiGet("/api/admin/members"),
+        apiGet("/api/admin/sessions"),
+        apiGet("/api/admin/attendance/today")
+    ]);
+
+    adminMembers = Array.isArray(membersData) ? membersData : [];
+    adminSessions = Array.isArray(sessionsData) ? sessionsData : [];
+    adminAttendance = Array.isArray(attendanceData) ? attendanceData : [];
+
+    currentUser = {
+        id: authSession.memberId,
+        firstName: "Admin",
+        fullName: "Admin User",
+        email: authSession.email,
+        phone: "",
+        role: "ADMIN",
+        status: "ADMIN",
+        accountStatus: "ACTIVE",
+        plan: "Admin Panel",
+        subscriptionEndDate: null
+    };
+}
+
 async function loadInitialData() {
     await loadPublicData();
 
-    if (authSession) {
-        await loadMemberData();
+    if (!authSession) {
+        return;
     }
+
+    if (isAdminUser()) {
+        await loadAdminData();
+        return;
+    }
+
+    await loadMemberData();
 }
 
 function getCurrentPlan() {
@@ -386,6 +504,32 @@ function renderHeader() {
         return;
     }
 
+    if (isAdminUser()) {
+        document.getElementById("headerUserName").textContent = "Admin";
+        document.getElementById("heroPlanName").textContent = "Control";
+        document.getElementById("heroStatusBadge").textContent = "ADMIN";
+
+        document.getElementById("heroVisitCount").textContent = adminAttendance.length;
+        document.getElementById("heroRegisteredClasses").textContent = adminSessions.length;
+        document.getElementById("heroPlanExpires").textContent = "Live";
+
+        document.getElementById("monthVisitCount").textContent = adminAttendance.length;
+        document.getElementById("nextClassShort").textContent = adminSessions.length;
+
+        document.getElementById("homePlanName").textContent = "Admin dashboard";
+        document.getElementById("homePlanDetails").textContent = "Manage sessions, members and attendance";
+        document.getElementById("homeStatusBadge").innerHTML = getStatusBadge("ADMIN");
+
+        document.getElementById("accountName").textContent = "Admin User";
+        document.getElementById("accountEmail").textContent = currentUser.email;
+        document.getElementById("accountStatusBadge").innerHTML = getStatusBadge("ADMIN");
+
+        document.getElementById("adminShortcutCard").classList.remove("hidden");
+        document.getElementById("adminPanelButton").classList.remove("hidden");
+
+        return;
+    }
+
     const plan = getCurrentPlan();
     const visitsThisMonth = getVisitsForCurrentMonth().length;
     const registeredClasses = registrations.filter(registration => registration.status === "REGISTERED").length;
@@ -419,6 +563,32 @@ function renderDashboard() {
 
     document.getElementById("nextClassShort").textContent = nextSession ? nextSession.time : "—";
 
+    if (isAdminUser()) {
+        document.getElementById("nextClassShort").textContent = adminSessions.length;
+
+        document.getElementById("nextSessionCard").innerHTML = `
+            <div class="grid grid-cols-2 gap-3">
+                <div class="rounded-3xl bg-slate-100 p-4">
+                    <p class="text-xs font-bold text-slate-400">Members</p>
+                    <p class="mt-2 text-3xl font-black text-slate-950">${adminMembers.length}</p>
+                </div>
+
+                <div class="rounded-3xl bg-slate-100 p-4">
+                    <p class="text-xs font-bold text-slate-400">Sessions</p>
+                    <p class="mt-2 text-3xl font-black text-violet-600">${adminSessions.length}</p>
+                </div>
+
+                <div class="col-span-2 rounded-3xl bg-slate-950 p-4 text-white">
+                    <p class="text-xs font-bold text-white/50">Today attendance</p>
+                    <p class="mt-2 text-3xl font-black">${adminAttendance.length}</p>
+                    <p class="mt-1 text-sm text-white/60">check-ins recorded today</p>
+                </div>
+            </div>
+        `;
+
+        return;
+    }
+
     if (!nextSession) {
         document.getElementById("nextSessionCard").innerHTML = `
             <p class="rounded-3xl bg-slate-100 p-4 text-sm text-slate-500">No upcoming sessions.</p>
@@ -451,10 +621,8 @@ function renderCheckInPage() {
 
     const message = document.getElementById("checkinMessage");
 
-    if (message) {
-        message.classList.remove("hidden", "bg-emerald-100", "text-emerald-700");
-        message.classList.add("bg-orange-100", "text-orange-700");
-        message.textContent = "Check-in by code is not available yet because the backend API does not include attendance/access-code endpoints.";
+    if (message && message.textContent.trim() === "") {
+        message.classList.add("hidden");
     }
 
     renderRecentVisits();
@@ -462,16 +630,34 @@ function renderCheckInPage() {
 
 function renderRecentVisits() {
     const recentVisitsList = document.getElementById("recentVisitsList");
+    const recentVisits = [...visitRecords].reverse().slice(0, 4);
 
-    recentVisitsList.innerHTML = `
-        <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
-            Visit history is not connected yet. Backend needs attendance endpoints.
-        </p>
-    `;
+    if (recentVisits.length === 0) {
+        recentVisitsList.innerHTML = `<p class="text-sm text-slate-500">No check-ins yet.</p>`;
+        return;
+    }
+
+    recentVisitsList.innerHTML = recentVisits.map(visit => `
+        <div class="flex items-center justify-between rounded-2xl bg-slate-100 p-3">
+            <div>
+                <p class="text-sm font-black text-slate-950">${visit.date}</p>
+                <p class="text-xs text-slate-500">Gym entrance confirmed</p>
+            </div>
+
+            <span class="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">${visit.time}</span>
+        </div>
+    `).join("");
 }
 
 function getVisitsForCurrentMonth() {
-    return [];
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    return visitRecords.filter(visit => {
+        const date = new Date(`${visit.date}T00:00:00`);
+        return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
+    });
 }
 
 function renderCalendar() {
@@ -480,6 +666,7 @@ function renderCalendar() {
     const month = now.getMonth();
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
+    const visitDates = new Set(visitRecords.map(visit => visit.date));
 
     document.getElementById("calendarTitle").textContent = getMonthName(now);
 
@@ -492,12 +679,15 @@ function renderCalendar() {
     for (let day = 1; day <= lastDay.getDate(); day++) {
         const date = new Date(year, month, day);
         const dateKey = formatLocalDate(date);
+        const hasVisit = visitDates.has(dateKey);
         const isToday = dateKey === getTodayDate();
 
         cells.push(`
-            <div class="relative flex h-11 items-center justify-center rounded-2xl bg-white text-sm font-black text-slate-700
-                        ${isToday ? "ring-2 ring-violet-400" : ""}">
+            <div class="relative flex h-11 items-center justify-center rounded-2xl text-sm font-black
+                        ${hasVisit ? "bg-violet-600 text-white" : "bg-white text-slate-700"}
+                        ${isToday && !hasVisit ? "ring-2 ring-violet-400" : ""}">
                 ${day}
+                ${hasVisit ? `<span class="absolute bottom-1 h-1.5 w-1.5 rounded-full bg-white"></span>` : ""}
             </div>
         `);
     }
@@ -508,17 +698,28 @@ function renderCalendar() {
 
 function renderMonthVisitsList() {
     const monthVisitsList = document.getElementById("monthVisitsList");
+    const monthVisits = getVisitsForCurrentMonth();
 
-    monthVisitsList.innerHTML = `
-        <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
-            Calendar is ready in the UI, but visit records require backend attendance API.
-        </p>
-    `;
+    if (monthVisits.length === 0) {
+        monthVisitsList.innerHTML = `<p class="text-sm text-slate-500">No visits this month.</p>`;
+        return;
+    }
+
+    monthVisitsList.innerHTML = [...monthVisits].reverse().map(visit => `
+        <div class="flex items-center justify-between rounded-2xl bg-slate-100 p-3">
+            <div>
+                <p class="text-sm font-black text-slate-950">${visit.date}</p>
+                <p class="text-xs text-slate-500">Recorded check-in</p>
+            </div>
+
+            <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">${visit.time}</span>
+        </div>
+    `).join("");
 }
 
 function getSessionButtonText(session, isFull, isInactive, isUnavailable) {
     if (session.registered) {
-        return "Registered";
+        return "Cancel registration";
     }
 
     if (isUnavailable) {
@@ -540,6 +741,45 @@ function renderClasses() {
     const classesList = document.getElementById("classesList");
 
     if (!classesList) {
+        return;
+    }
+
+    if (isAdminUser()) {
+        if (adminSessions.length === 0) {
+            classesList.innerHTML = `
+                <p class="rounded-2xl bg-white p-4 text-sm font-semibold text-slate-500">
+                    No sessions created yet.
+                </p>
+            `;
+            return;
+        }
+
+        classesList.innerHTML = adminSessions.map(session => `
+            <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+                <div class="mb-4 flex items-start justify-between gap-4">
+                    <div>
+                        <h3 class="text-lg font-black text-slate-950">${session.title}</h3>
+                        <p class="mt-1 text-sm text-slate-500">${formatDateTimePart(session.startDatetime, "date")} · ${formatDateTimePart(session.startDatetime, "time")}</p>
+                        <p class="mt-1 text-sm text-slate-500">Trainer: ${session.trainerName}</p>
+                    </div>
+
+                    <div class="rounded-2xl bg-violet-100 px-3 py-2 text-center">
+                        <p class="text-xs font-bold text-violet-500">Booked</p>
+                        <p class="text-xl font-black text-violet-700">${session.registeredCount}/${session.capacity}</p>
+                    </div>
+                </div>
+
+                <div class="mb-4 h-3 overflow-hidden rounded-full bg-slate-100">
+                    <div class="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-400" style="width: ${Math.min(100, Math.round((session.registeredCount / session.capacity) * 100))}%"></div>
+                </div>
+
+                <button class="admin-session-stats-button w-full rounded-2xl bg-slate-950 px-4 py-4 text-sm font-black text-white"
+                        data-session-id="${session.id}">
+                    View registrations
+                </button>
+            </article>
+        `).join("");
+
         return;
     }
 
@@ -580,9 +820,10 @@ function renderClasses() {
                 </div>
 
                 <button class="session-register-button w-full rounded-2xl px-4 py-4 text-sm font-black
-                               ${isDisabled ? "bg-slate-200 text-slate-400" : "bg-slate-950 text-white"}"
-                        ${isDisabled ? "disabled" : ""}
-                        data-session-id="${session.id}">
+                               ${session.registered ? "bg-rose-100 text-rose-700" : isDisabled ? "bg-slate-200 text-slate-400" : "bg-slate-950 text-white"}"
+                        ${isDisabled && !session.registered ? "disabled" : ""}
+                        data-session-id="${session.id}"
+                        data-registration-id="${session.registrationId || ""}">
                     ${getSessionButtonText(session, isFull, isInactive, isUnavailable)}
                 </button>
 
@@ -649,44 +890,112 @@ function renderAccountPlans() {
     }).join("");
 }
 
-function updateAdminCodeDisplay() {
-    const codeElement = document.getElementById("adminCurrentCode");
-    const timerLabel = document.getElementById("codeTimerLabel");
-    const timerBar = document.getElementById("codeTimerBar");
+async function updateAdminCodeDisplay() {
+    try {
+        const data = await apiGet("/api/admin/access-code/current");
 
-    if (codeElement) {
-        codeElement.textContent = "N/A";
-    }
+        const codeElement = document.getElementById("adminCurrentCode");
+        const timerLabel = document.getElementById("codeTimerLabel");
+        const timerBar = document.getElementById("codeTimerBar");
 
-    if (timerLabel) {
-        timerLabel.textContent = "not connected";
-    }
+        if (codeElement) {
+            codeElement.textContent = data.code;
+        }
 
-    if (timerBar) {
-        timerBar.style.width = "0%";
+        if (timerLabel) {
+            timerLabel.textContent = `${data.remainingSeconds}s`;
+        }
+
+        if (timerBar) {
+            timerBar.style.width = `${(data.remainingSeconds / 60) * 100}%`;
+        }
+    } catch (error) {
+        console.error(error);
     }
 }
 
-function renderAdminAttendance() {
+async function renderAdminAttendance() {
     const adminAttendanceList = document.getElementById("adminAttendanceList");
 
     if (!adminAttendanceList) {
         return;
     }
 
-    adminAttendanceList.innerHTML = `
-        <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
-            Admin attendance view requires attendance backend endpoints.
-        </p>
-    `;
+    if (!authSession || authSession.role !== "ADMIN") {
+        adminAttendanceList.innerHTML = `
+            <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
+                Admin attendance is available only for ADMIN users.
+            </p>
+        `;
+        return;
+    }
+
+    try {
+        const todayVisits = await apiGet("/api/admin/attendance/today");
+
+        if (todayVisits.length === 0) {
+            adminAttendanceList.innerHTML = `
+                <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
+                    No check-ins recorded today.
+                </p>
+            `;
+            return;
+        }
+
+        adminAttendanceList.innerHTML = todayVisits.map(visit => `
+            <div class="flex items-center justify-between rounded-2xl bg-slate-100 p-3">
+                <div>
+                    <p class="text-sm font-black text-slate-950">${visit.memberName}</p>
+                    <p class="text-xs text-slate-500">${visit.date}</p>
+                </div>
+
+                <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">${visit.time}</span>
+            </div>
+        `).join("");
+    } catch (error) {
+        adminAttendanceList.innerHTML = `
+            <p class="rounded-2xl bg-rose-100 p-4 text-sm font-semibold text-rose-700">
+                ${error.message || "Could not load attendance."}
+            </p>
+        `;
+    }
 }
 
 async function processCheckIn() {
-    const message = document.getElementById("checkinMessage");
+    if (!authSession) {
+        showAuthOverlay();
+        return;
+    }
 
-    message.classList.remove("hidden", "bg-emerald-100", "text-emerald-700", "bg-rose-100", "text-rose-700");
-    message.classList.add("bg-orange-100", "text-orange-700");
-    message.textContent = "Check-in is not connected yet. Backend must add attendance/access-code endpoints.";
+    const input = document.getElementById("checkinCodeInput");
+    const message = document.getElementById("checkinMessage");
+    const enteredCode = input.value.trim();
+
+    message.classList.remove("hidden", "bg-emerald-100", "text-emerald-700", "bg-rose-100", "text-rose-700", "bg-orange-100", "text-orange-700");
+
+    try {
+        const response = await apiPost(`/api/member/check-in?email=${encodeEmail()}`, {
+            code: enteredCode
+        });
+
+        visitRecords = response.visits || [];
+
+        message.textContent = response.message;
+
+        if (response.success) {
+            message.classList.add("bg-emerald-100", "text-emerald-700");
+            input.value = "";
+            showToast(response.message);
+        } else {
+            message.classList.add("bg-rose-100", "text-rose-700");
+        }
+
+        await loadMemberData();
+        refreshAll();
+    } catch (error) {
+        message.textContent = error.message || "Check-in failed.";
+        message.classList.add("bg-rose-100", "text-rose-700");
+    }
 }
 
 async function registerForSession(sessionId) {
@@ -704,6 +1013,29 @@ async function registerForSession(sessionId) {
         refreshAll();
     } catch (error) {
         showToast(error.message || "Could not register for session");
+    }
+}
+
+async function cancelRegistration(registrationId) {
+    if (!authSession) {
+        showAuthOverlay();
+        return;
+    }
+
+    if (!registrationId) {
+        showToast("Registration was not found");
+        return;
+    }
+
+    try {
+        await apiDelete(`/api/member/registrations/${encodeURIComponent(registrationId)}?email=${encodeEmail()}`);
+
+        showToast("Registration cancelled");
+
+        await loadMemberData();
+        refreshAll();
+    } catch (error) {
+        showToast(error.message || "Could not cancel registration");
     }
 }
 
@@ -725,8 +1057,45 @@ async function switchPlan(planId, planName) {
     }
 }
 
+function applyRoleVisibility() {
+    const heroActionButton = document.querySelector("header button[data-go]");
+    const membershipCard = document.getElementById("homePlanName")?.closest("article");
+    const accountPlansCard = document.getElementById("accountPlansList")?.closest("article");
+
+    if (isAdminUser()) {
+        if (heroActionButton) {
+            heroActionButton.dataset.go = "admin";
+            heroActionButton.textContent = "Open admin panel";
+        }
+
+        if (membershipCard) {
+            membershipCard.classList.add("hidden");
+        }
+
+        if (accountPlansCard) {
+            accountPlansCard.classList.add("hidden");
+        }
+
+        return;
+    }
+
+    if (heroActionButton) {
+        heroActionButton.dataset.go = "checkin";
+        heroActionButton.textContent = "Check in to gym";
+    }
+
+    if (membershipCard) {
+        membershipCard.classList.remove("hidden");
+    }
+
+    if (accountPlansCard) {
+        accountPlansCard.classList.remove("hidden");
+    }
+}
+
 function refreshAll() {
     renderHeader();
+    applyRoleVisibility();
     renderDashboard();
     renderCheckInPage();
     renderCalendar();
@@ -734,6 +1103,7 @@ function refreshAll() {
     renderAccountPlans();
     renderAdminAttendance();
     updateAdminCodeDisplay();
+    renderAdminSessionStats();
 }
 
 function createAuthOverlay() {
@@ -873,6 +1243,7 @@ function setupAuthOverlayEvents() {
             saveAuthSession(loginData);
 
             await loadInitialData();
+            configureNavigationForRole();
             hideAuthOverlay();
             refreshAll();
             setActivePage("home");
@@ -908,6 +1279,234 @@ function setupAuthOverlayEvents() {
     });
 }
 
+function createLogoutButton() {
+    if (document.getElementById("logoutButton")) {
+        return;
+    }
+
+    const accountPage = document.getElementById("accountPage");
+
+    if (!accountPage) {
+        return;
+    }
+
+    const logoutCard = document.createElement("article");
+    logoutCard.className = "mt-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100";
+
+    logoutCard.innerHTML = `
+        <h3 class="mb-4 font-black text-slate-950">Session</h3>
+        <button id="logoutButton"
+                class="w-full rounded-2xl bg-rose-100 px-4 py-4 text-left text-sm font-black text-rose-700">
+            Logout
+        </button>
+    `;
+
+    accountPage.appendChild(logoutCard);
+
+    document.getElementById("logoutButton").addEventListener("click", logout);
+}
+
+async function loadAdminSessions() {
+    if (!authSession || authSession.role !== "ADMIN") {
+        adminSessions = [];
+        return;
+    }
+
+    adminSessions = await apiGet("/api/admin/sessions");
+
+    for (const session of adminSessions) {
+        try {
+            adminSessionRegistrations[session.id] = await apiGet(`/api/admin/sessions/${session.id}/registrations`);
+        } catch (error) {
+            adminSessionRegistrations[session.id] = [];
+        }
+    }
+}
+
+function renderAdminSessionStats() {
+    const list = document.getElementById("adminSessionStatsList");
+
+    if (!list) {
+        return;
+    }
+
+    if (!authSession || authSession.role !== "ADMIN") {
+        list.innerHTML = `
+            <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
+                Session statistics are available only for ADMIN users.
+            </p>
+        `;
+        return;
+    }
+
+    if (adminSessions.length === 0) {
+        list.innerHTML = `
+            <p class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
+                No sessions created yet.
+            </p>
+        `;
+        return;
+    }
+
+    list.innerHTML = adminSessions.map(session => {
+        const registrationsForSession = adminSessionRegistrations[session.id] || [];
+        const activeCount = registrationsForSession.filter(registration => registration.status === "REGISTERED").length;
+
+        return `
+            <div class="rounded-2xl bg-slate-100 p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="font-black text-slate-950">${session.title}</p>
+                        <p class="mt-1 text-xs text-slate-500">${formatDateTimePart(session.startDatetime, "date")} · ${formatDateTimePart(session.startDatetime, "time")}</p>
+                        <p class="mt-1 text-xs text-slate-500">Trainer: ${session.trainerName}</p>
+                    </div>
+
+                    <span class="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-700">
+                        ${activeCount}/${session.capacity}
+                    </span>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+async function createAdminSession(event) {
+    event.preventDefault();
+
+    if (!isAdminUser()) {
+        showToast("Admin access required");
+        return;
+    }
+
+    const title = document.getElementById("adminSessionTitle").value.trim();
+    const trainerName = document.getElementById("adminTrainerName").value.trim();
+    const startDatetime = document.getElementById("adminStartDatetime").value;
+    const endDatetime = document.getElementById("adminEndDatetime").value;
+    const capacity = Number(document.getElementById("adminCapacity").value);
+
+    if (!title || !trainerName || !startDatetime || !endDatetime || !capacity) {
+        showToast("Please fill all session fields");
+        return;
+    }
+
+    try {
+        await apiPost("/api/admin/sessions", {
+            title,
+            trainerName,
+            startDatetime,
+            endDatetime,
+            capacity
+        });
+
+        showToast("Training session created");
+
+        document.getElementById("adminCreateSessionForm").reset();
+
+        await loadAdminData();
+        await loadPublicData();
+        await loadAdminSessions();
+
+        refreshAll();
+    } catch (error) {
+        showToast(error.message || "Could not create session");
+    }
+}
+
+
+async function showAdminSessionRegistrations(sessionId) {
+    const box = document.getElementById("adminSessionRegistrationsBox");
+
+    if (!box) {
+        return;
+    }
+
+    try {
+        const data = await apiGet(`/api/admin/sessions/${encodeURIComponent(sessionId)}/registrations`);
+
+        if (!data.length) {
+            box.innerHTML = "No registrations for this session yet.";
+            return;
+        }
+
+        box.innerHTML = data.map(registration => `
+            <div class="mb-3 rounded-xl bg-white p-3 last:mb-0">
+                <p class="font-black text-slate-950">${registration.memberName}</p>
+                <p class="text-xs text-slate-500">${registration.status} · ${registration.createdAt}</p>
+            </div>
+        `).join("");
+    } catch (error) {
+        box.innerHTML = error.message || "Could not load registrations.";
+    }
+}
+
+function createAdminManagementUi() {
+    if (document.getElementById("adminSessionManager")) {
+        return;
+    }
+
+    const adminPage = document.getElementById("adminPage");
+
+    if (!adminPage) {
+        return;
+    }
+
+    const manager = document.createElement("article");
+    manager.id = "adminSessionManager";
+    manager.className = "mt-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100";
+
+    manager.innerHTML = `
+        <h3 class="mb-4 font-black text-slate-950">Create training session</h3>
+
+        <form id="adminCreateSessionForm" class="space-y-3">
+            <input id="adminSessionTitle"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="text"
+                   placeholder="Session title">
+
+            <input id="adminTrainerName"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="text"
+                   placeholder="Trainer name">
+
+            <input id="adminStartDatetime"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="datetime-local">
+
+            <input id="adminEndDatetime"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="datetime-local">
+
+            <input id="adminCapacity"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="number"
+                   min="1"
+                   placeholder="Capacity">
+
+            <button class="w-full rounded-2xl bg-slate-950 px-4 py-4 text-sm font-black text-white"
+                    type="submit">
+                Create session
+            </button>
+        </form>
+
+        <div class="mt-6">
+            <h3 class="mb-4 font-black text-slate-950">Session statistics</h3>
+            <div id="adminSessionStatsList" class="space-y-3"></div>
+        </div>
+
+        <div class="mt-6">
+            <h3 class="mb-4 font-black text-slate-950">Session registrations</h3>
+            <div id="adminSessionRegistrationsBox"
+                 class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
+                Select a session to view registrations.
+            </div>
+        </div>
+    `;
+
+    adminPage.appendChild(manager);
+
+    document.getElementById("adminCreateSessionForm").addEventListener("submit", createAdminSession);
+}
+
 function setupEvents() {
     document.querySelectorAll(".nav-button").forEach(button => {
         button.addEventListener("click", () => {
@@ -920,6 +1519,13 @@ function setupEvents() {
 
         if (goButton) {
             setActivePage(goButton.dataset.go);
+        }
+
+        const adminStatsButton = event.target.closest(".admin-session-stats-button");
+
+        if (adminStatsButton) {
+            setActivePage("admin");
+            showAdminSessionRegistrations(adminStatsButton.dataset.sessionId);
         }
     });
 
@@ -940,7 +1546,11 @@ function setupEvents() {
         const sessionButton = event.target.closest(".session-register-button");
 
         if (sessionButton && !sessionButton.disabled) {
-            registerForSession(sessionButton.dataset.sessionId);
+            if (sessionButton.dataset.registrationId) {
+                cancelRegistration(sessionButton.dataset.registrationId);
+            } else {
+                registerForSession(sessionButton.dataset.sessionId);
+            }
         }
 
         const planButton = event.target.closest(".plan-change-button");
@@ -949,6 +1559,8 @@ function setupEvents() {
             switchPlan(planButton.dataset.planId, planButton.dataset.planName);
         }
     });
+    createLogoutButton();
+    createAdminManagementUi();
 }
 
 async function initializeApp() {
@@ -956,6 +1568,10 @@ async function initializeApp() {
         setupEvents();
 
         await loadInitialData();
+        configureNavigationForRole();
+        if (authSession && authSession.role === "ADMIN") {
+            await loadAdminSessions();
+        }
         refreshAll();
         setActivePage("home");
 
