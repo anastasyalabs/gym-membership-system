@@ -9,6 +9,7 @@ import com.gym.gym_membership_system.exception.ResourceNotFoundException;
 import com.gym.gym_membership_system.repository.MemberRepository;
 import com.gym.gym_membership_system.repository.RoleRepository;
 import com.gym.gym_membership_system.repository.UserAccountRepository;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,38 +19,36 @@ public class UserAccountService {
     private final UserAccountRepository userAccountRepository;
     private final MemberRepository memberRepository;
     private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public UserAccountService(UserAccountRepository userAccountRepository,
                               MemberRepository memberRepository,
-                              RoleRepository roleRepository) {
+                              RoleRepository roleRepository,
+                              PasswordEncoder passwordEncoder) {
         this.userAccountRepository = userAccountRepository;
         this.memberRepository = memberRepository;
         this.roleRepository = roleRepository;
+        this.passwordEncoder = passwordEncoder;
     }
-
-    // ─── Register ─────────────────────────────────────────────────────────────
 
     @Transactional
     public void register(RegisterRequest request) {
-        // 1. Check email is not already taken
         if (userAccountRepository.findByEmail(request.getEmail()).isPresent()) {
             throw new IllegalArgumentException("Email already in use");
         }
 
-        // 2. Fetch the MEMBER role from DB
         Role memberRole = roleRepository.findByName(RoleName.MEMBER)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "MEMBER role not found — make sure DataInitializer has run"));
 
-        // 3. Create UserAccount — password stored as plain text temporarily
         UserAccount account = new UserAccount(
                 request.getEmail(),
-                request.getPassword(),
+                passwordEncoder.encode(request.getPassword()),
                 memberRole
         );
+
         userAccountRepository.save(account);
 
-        // 4. Create Member profile linked to the account
         Member member = new Member(
                 account,
                 request.getName(),
@@ -57,36 +56,60 @@ public class UserAccountService {
                 request.getPhone(),
                 request.getDateOfBirth()
         );
+
         memberRepository.save(member);
     }
 
-    // ─── Simple login check (no JWT for now) ──────────────────────────────────
-
+    @Transactional
     public UserAccount login(String email, String password) {
         UserAccount account = userAccountRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Account not found: " + email));
 
-        // Temporary plain text comparison — BCrypt will replace this later
-        if (!account.getPasswordHash().equals(password)) {
+        String storedPassword = account.getPasswordHash();
+
+        if (storedPassword == null || storedPassword.isBlank()) {
+            throw new IllegalArgumentException("Invalid password");
+        }
+
+        boolean passwordMatches;
+
+        if (isBCryptHash(storedPassword)) {
+            passwordMatches = passwordEncoder.matches(password, storedPassword);
+        } else {
+            // Temporary backward compatibility for old demo data stored as plain text.
+            passwordMatches = storedPassword.equals(password);
+
+            if (passwordMatches) {
+                account.setPasswordHash(passwordEncoder.encode(password));
+                userAccountRepository.save(account);
+            }
+        }
+
+        if (!passwordMatches) {
             throw new IllegalArgumentException("Invalid password");
         }
 
         return account;
     }
 
-    // ─── Helper ───────────────────────────────────────────────────────────────
-
     public UserAccount getByEmail(String email) {
         return userAccountRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Account not found: " + email));
     }
+
     @Transactional(readOnly = true)
     public String getRoleName(UserAccount account) {
-        // Reload account within a transaction so Role can be lazily loaded
         UserAccount fresh = userAccountRepository.findById(account.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account not found"));
+
         return fresh.getRole().getName().name();
+    }
+
+    private boolean isBCryptHash(String value) {
+        return value.startsWith("$2a$")
+                || value.startsWith("$2b$")
+                || value.startsWith("$2y$");
     }
 }

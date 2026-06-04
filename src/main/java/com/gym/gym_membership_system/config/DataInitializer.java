@@ -14,6 +14,7 @@ import com.gym.gym_membership_system.repository.RoleRepository;
 import com.gym.gym_membership_system.repository.TrainingSessionRepository;
 import com.gym.gym_membership_system.repository.UserAccountRepository;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,17 +29,20 @@ public class DataInitializer implements CommandLineRunner {
     private final UserAccountRepository userAccountRepository;
     private final MemberRepository memberRepository;
     private final TrainingSessionRepository trainingSessionRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public DataInitializer(RoleRepository roleRepository,
                            MembershipPlanRepository membershipPlanRepository,
                            UserAccountRepository userAccountRepository,
                            MemberRepository memberRepository,
-                           TrainingSessionRepository trainingSessionRepository) {
+                           TrainingSessionRepository trainingSessionRepository,
+                           PasswordEncoder passwordEncoder) {
         this.roleRepository = roleRepository;
         this.membershipPlanRepository = membershipPlanRepository;
         this.userAccountRepository = userAccountRepository;
         this.memberRepository = memberRepository;
         this.trainingSessionRepository = trainingSessionRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -148,7 +152,7 @@ public class DataInitializer implements CommandLineRunner {
 
         UserAccount account = new UserAccount(
                 email,
-                password,
+                passwordEncoder.encode(password),
                 role
         );
 
