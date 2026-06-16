@@ -9,6 +9,7 @@ public class MembershipPlanRequest {
     private String description;
     private int durationDays;
     private double price;
+    private Boolean active;
 
     public MembershipPlanRequest() {}
 
@@ -26,4 +27,11 @@ public class MembershipPlanRequest {
 
     public double getPrice() { return price; }
     public void setPrice(double price) { this.price = price; }
+    public Boolean getActive() {
+        return active;
+    }
+
+    public void setActive(Boolean active) {
+        this.active = active;
+    }
 }

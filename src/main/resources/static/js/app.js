@@ -17,6 +17,8 @@ let adminSessionRegistrations = {};
 let visitRecords = [];
 let adminMembers = [];
 let adminAttendance = [];
+let adminPlans = [];
+let adminSubscriptions = [];
 
 function readAuthSession() {
     try {
@@ -64,14 +66,21 @@ async function apiRequest(url, options = {}) {
         payload = await response.text();
     }
 
-    if (!response.ok) {
-        const message =
-            payload && typeof payload === "object" && payload.message
-                ? payload.message
-                : payload || `Request failed: ${response.status}`;
+	if (!response.ok) {
+	    let message = `Request failed: ${response.status}`;
 
-        throw new Error(message);
-    }
+	    if (payload && typeof payload === "object") {
+		message =
+		    payload.message ||
+		    payload.error ||
+		    payload.detail ||
+		    JSON.stringify(payload);
+	    } else if (payload) {
+		message = payload;
+	    }
+
+	    throw new Error(message);
+	}
 
     return payload;
 }
@@ -152,6 +161,14 @@ function formatDateTimePart(dateTime, part) {
     return time.slice(0, 5);
 }
 
+function isPastSession(apiSession) {
+    if (!apiSession || !apiSession.startDatetime) {
+        return false;
+    }
+
+    return new Date(apiSession.startDatetime) < new Date();
+}
+
 function normalizePlan(apiPlan) {
     return {
         id: apiPlan.id,
@@ -212,13 +229,24 @@ function getActiveSubscription() {
         return null;
     }
 
-    const activeSubscription = subscriptions.find(subscription => subscription.status === "ACTIVE");
+    const sortedSubscriptions = [...subscriptions].sort((a, b) => {
+        const aId = Number(a.id || 0);
+        const bId = Number(b.id || 0);
+
+        if (aId !== bId) {
+            return bId - aId;
+        }
+
+        return String(b.endDate || "").localeCompare(String(a.endDate || ""));
+    });
+
+    const activeSubscription = sortedSubscriptions.find(subscription => subscription.status === "ACTIVE");
 
     if (activeSubscription) {
         return activeSubscription;
     }
 
-    return subscriptions[0];
+    return sortedSubscriptions[0];
 }
 
 function buildCurrentUser(profile) {
@@ -230,6 +258,7 @@ function buildCurrentUser(profile) {
         fullName: `${profile.name || ""} ${profile.surname || ""}`.trim(),
         email: profile.email,
         phone: profile.phone,
+	dateOfBirth: profile.dateOfBirth,
         role: authSession?.role || "MEMBER",
         status: currentSubscription ? currentSubscription.status : "NO PLAN",
         accountStatus: profile.status,
@@ -245,7 +274,9 @@ async function loadPublicData() {
     ]);
 
     plans = plansData.map(normalizePlan);
-    sessions = sessionsData.map(normalizeSession);
+    sessions = sessionsData
+        .filter(session => !isPastSession(session))
+        .map(normalizeSession);
 }
 
 async function loadMemberData() {
@@ -268,7 +299,9 @@ async function loadMemberData() {
     currentUser = buildCurrentUser(profileData);
 
     const sessionsData = await apiGet("/api/public/sessions");
-    sessions = sessionsData.map(normalizeSession);
+    sessions = sessionsData
+        .filter(session => !isPastSession(session))
+        .map(normalizeSession);
 }
 
 function configureNavigationForRole() {
@@ -286,13 +319,13 @@ function configureNavigationForRole() {
         buttons[1].innerHTML = `<span class="block text-lg">#</span>Code`;
 
         buttons[2].dataset.page = "calendar";
-        buttons[2].innerHTML = `<span class="block text-lg">□</span>Visits`;
+        buttons[2].innerHTML = `<span class="block text-lg">☻</span>Members`;
 
         buttons[3].dataset.page = "classes";
         buttons[3].innerHTML = `<span class="block text-lg">✚</span>Sessions`;
 
         buttons[4].dataset.page = "account";
-        buttons[4].innerHTML = `<span class="block text-lg">☻</span>Admin`;
+        buttons[4].innerHTML = `<span class="block text-lg">⚙</span>Manage`;
 
         return;
     }
@@ -318,15 +351,19 @@ async function loadAdminData() {
         return;
     }
 
-    const [membersData, sessionsData, attendanceData] = await Promise.all([
+    const [membersData, sessionsData, attendanceData, plansData, subscriptionsData] = await Promise.all([
         apiGet("/api/admin/members"),
         apiGet("/api/admin/sessions"),
-        apiGet("/api/admin/attendance/today")
+        apiGet("/api/admin/attendance/today"),
+        apiGet("/api/admin/plans"),
+        apiGet("/api/admin/subscriptions")
     ]);
 
     adminMembers = Array.isArray(membersData) ? membersData : [];
     adminSessions = Array.isArray(sessionsData) ? sessionsData : [];
     adminAttendance = Array.isArray(attendanceData) ? attendanceData : [];
+    adminPlans = Array.isArray(plansData) ? plansData : [];
+    adminSubscriptions = Array.isArray(subscriptionsData) ? subscriptionsData : [];
 
     currentUser = {
         id: authSession.memberId,
@@ -438,6 +475,38 @@ function showToast(message) {
     }, 2600);
 }
 
+function setTextIfExists(id, value) {
+    const element = document.getElementById(id);
+
+    if (element) {
+        element.textContent = value;
+    }
+}
+
+function setHtmlIfExists(id, value) {
+    const element = document.getElementById(id);
+
+    if (element) {
+        element.innerHTML = value;
+    }
+}
+
+function addClassIfExists(id, className) {
+    const element = document.getElementById(id);
+
+    if (element) {
+        element.classList.add(className);
+    }
+}
+
+function removeClassIfExists(id, className) {
+    const element = document.getElementById(id);
+
+    if (element) {
+        element.classList.remove(className);
+    }
+}
+
 function setActivePage(pageName) {
     if (!authSession && pageName !== "home") {
         showAuthOverlay();
@@ -488,8 +557,8 @@ function renderGuestState() {
     document.getElementById("accountEmail").textContent = "Please log in";
     document.getElementById("accountStatusBadge").innerHTML = getStatusBadge("GUEST");
 
-    document.getElementById("adminShortcutCard").classList.add("hidden");
-    document.getElementById("adminPanelButton").classList.add("hidden");
+    addClassIfExists("adminShortcutCard", "hidden");
+    addClassIfExists("adminPanelButton", "hidden");
 
     renderDashboard();
     renderClasses();
@@ -520,12 +589,24 @@ function renderHeader() {
         document.getElementById("homePlanDetails").textContent = "Manage sessions, members and attendance";
         document.getElementById("homeStatusBadge").innerHTML = getStatusBadge("ADMIN");
 
-        document.getElementById("accountName").textContent = "Admin User";
-        document.getElementById("accountEmail").textContent = currentUser.email;
-        document.getElementById("accountStatusBadge").innerHTML = getStatusBadge("ADMIN");
+	const accountName = document.getElementById("accountName");
+	const accountEmail = document.getElementById("accountEmail");
+	const accountStatusBadge = document.getElementById("accountStatusBadge");
 
-        document.getElementById("adminShortcutCard").classList.remove("hidden");
-        document.getElementById("adminPanelButton").classList.remove("hidden");
+	if (accountName) {
+	    accountName.textContent = "Admin User";
+	}
+
+	if (accountEmail) {
+	    accountEmail.textContent = currentUser.email;
+	}
+
+	if (accountStatusBadge) {
+	    accountStatusBadge.innerHTML = getStatusBadge("ADMIN");
+	}
+
+	removeClassIfExists("adminShortcutCard", "hidden");
+	removeClassIfExists("adminPanelButton", "hidden");
 
         return;
     }
@@ -554,8 +635,16 @@ function renderHeader() {
 
     const isAdmin = currentUser.role === "ADMIN";
 
-    document.getElementById("adminShortcutCard").classList.toggle("hidden", !isAdmin);
-    document.getElementById("adminPanelButton").classList.toggle("hidden", !isAdmin);
+	const adminShortcutCard = document.getElementById("adminShortcutCard");
+	const adminPanelButton = document.getElementById("adminPanelButton");
+
+	if (adminShortcutCard) {
+	    adminShortcutCard.classList.toggle("hidden", !isAdmin);
+	}
+
+	if (adminPanelButton) {
+	    adminPanelButton.classList.toggle("hidden", !isAdmin);
+	}
 }
 
 function renderDashboard() {
@@ -766,6 +855,7 @@ function renderClasses() {
                     <div class="rounded-2xl bg-violet-100 px-3 py-2 text-center">
                         <p class="text-xs font-bold text-violet-500">Booked</p>
                         <p class="text-xl font-black text-violet-700">${session.registeredCount}/${session.capacity}</p>
+			<p class="mt-1 text-[10px] font-black text-slate-400">${session.status}</p>
                     </div>
                 </div>
 
@@ -777,6 +867,12 @@ function renderClasses() {
                         data-session-id="${session.id}">
                     View registrations
                 </button>
+		<button class="admin-cancel-session-button mt-3 w-full rounded-2xl px-4 py-4 text-sm font-black
+			       ${session.status === "CANCELLED" ? "bg-slate-200 text-slate-400" : "bg-rose-100 text-rose-700"}"
+			${session.status === "CANCELLED" ? "disabled" : ""}
+			data-session-id="${session.id}">
+		    ${session.status === "CANCELLED" ? "Cancelled" : "Cancel session"}
+		</button>
             </article>
         `).join("");
 
@@ -850,10 +946,18 @@ function renderAccountPlans() {
     }
 
     accountPlansList.innerHTML = plans.map(plan => {
-        const isCurrent = currentUser && plan.name === currentUser.plan;
+        const isCurrentActive =
+	    currentUser &&
+	    plan.name === currentUser.plan &&
+	    currentUser.status === "ACTIVE";
+
+	const isSameButInactive =
+	    currentUser &&
+	    plan.name === currentUser.plan &&
+	    currentUser.status !== "ACTIVE";
 
         return `
-            <article class="rounded-[2rem] ${isCurrent ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-950"} p-4">
+            <article class="rounded-[2rem] ${isCurrentActive ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-950"} p-4">
                 <div class="flex items-start justify-between gap-4">
                     <div>
                         <div class="flex items-center gap-2">
@@ -861,11 +965,11 @@ function renderAccountPlans() {
                             ${plan.popular ? `<span class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-700">POPULAR</span>` : ""}
                         </div>
 
-                        <p class="mt-1 text-sm ${isCurrent ? "text-white/60" : "text-slate-500"}">${plan.description}</p>
+                        <p class="mt-1 text-sm ${isCurrentActive ? "text-white/60" : "text-slate-500"}">${plan.description}</p>
 
                         <div class="mt-3 flex flex-wrap gap-2">
                             ${plan.features.map(feature => `
-                                <span class="rounded-full ${isCurrent ? "bg-white/10 text-white/80" : "bg-white text-slate-500"} px-3 py-1 text-xs font-bold">
+                                <span class="rounded-full ${isCurrentActive ? "bg-white/10 text-white/80" : "bg-white text-slate-500"} px-3 py-1 text-xs font-bold">
                                     ${feature}
                                 </span>
                             `).join("")}
@@ -874,17 +978,17 @@ function renderAccountPlans() {
 
                     <div class="text-right">
                         <p class="text-2xl font-black">€${plan.price}</p>
-                        <p class="text-xs ${isCurrent ? "text-white/50" : "text-slate-400"}">${plan.duration}</p>
+                        <p class="text-xs ${isCurrentActive ? "text-white/50" : "text-slate-400"}">${plan.duration}</p>
                     </div>
                 </div>
 
-                <button class="plan-change-button mt-4 w-full rounded-2xl px-4 py-3 text-sm font-black
-                               ${isCurrent ? "bg-white/10 text-white" : "bg-violet-600 text-white"}"
-                        ${isCurrent ? "disabled" : ""}
-                        data-plan-id="${plan.id}"
-                        data-plan-name="${plan.name}">
-                    ${isCurrent ? "Current plan" : "Switch to this plan"}
-                </button>
+		<button class="plan-change-button mt-4 w-full rounded-2xl px-4 py-3 text-sm font-black
+			       ${isCurrentActive ? "bg-white/10 text-white" : "bg-violet-600 text-white"}"
+			${isCurrentActive ? "disabled" : ""}
+			data-plan-id="${plan.id}"
+			data-plan-name="${plan.name}">
+		    ${isCurrentActive ? "Current plan" : isSameButInactive ? "Renew this plan" : "Switch to this plan"}
+		</button>
             </article>
         `;
     }).join("");
@@ -1050,8 +1154,7 @@ async function switchPlan(planId, planName) {
 
         showToast(`Plan changed to ${planName}`);
 
-        await loadMemberData();
-        refreshAll();
+	await reloadMemberState();
     } catch (error) {
         showToast(error.message || "Could not change plan");
     }
@@ -1093,17 +1196,313 @@ function applyRoleVisibility() {
     }
 }
 
+function renderAdminDashboardPage() {
+    const activeSubscriptions = adminSubscriptions.filter(item => item.status === "ACTIVE").length;
+    const expiredSubscriptions = adminSubscriptions.filter(item => item.status === "EXPIRED").length;
+    const cancelledSubscriptions = adminSubscriptions.filter(item => item.status === "CANCELLED").length;
+
+    document.getElementById("monthVisitCount").textContent = adminAttendance.length;
+    document.getElementById("nextClassShort").textContent = adminSessions.length;
+
+    document.getElementById("nextSessionCard").innerHTML = `
+        <div class="grid grid-cols-2 gap-3">
+            <div class="rounded-3xl bg-slate-100 p-4">
+                <p class="text-xs font-bold text-slate-400">Members</p>
+                <p class="mt-2 text-3xl font-black text-slate-950">${adminMembers.length}</p>
+            </div>
+
+            <div class="rounded-3xl bg-slate-100 p-4">
+                <p class="text-xs font-bold text-slate-400">Sessions</p>
+                <p class="mt-2 text-3xl font-black text-violet-600">${adminSessions.length}</p>
+            </div>
+
+            <div class="rounded-3xl bg-emerald-50 p-4">
+                <p class="text-xs font-bold text-emerald-600">Active subs</p>
+                <p class="mt-2 text-3xl font-black text-emerald-700">${activeSubscriptions}</p>
+            </div>
+
+            <div class="rounded-3xl bg-rose-50 p-4">
+                <p class="text-xs font-bold text-rose-600">Inactive subs</p>
+                <p class="mt-2 text-3xl font-black text-rose-700">${expiredSubscriptions + cancelledSubscriptions}</p>
+            </div>
+
+            <div class="col-span-2 rounded-3xl bg-slate-950 p-4 text-white">
+                <p class="text-xs font-bold text-white/50">Today attendance</p>
+                <p class="mt-2 text-3xl font-black">${adminAttendance.length}</p>
+                <p class="mt-1 text-sm text-white/60">check-ins recorded today</p>
+            </div>
+        </div>
+    `;
+}
+
+function renderAdminCodePage() {
+    const adminPage = document.getElementById("adminPage");
+
+    if (!adminPage || !isAdminUser()) {
+        return;
+    }
+
+    adminPage.innerHTML = `
+        <div class="mb-4">
+            <h2 class="text-xl font-black text-slate-950">Access Code</h2>
+            <p class="text-sm text-slate-500">Current code for gym entrance check-in</p>
+        </div>
+
+        <article class="mb-5 rounded-[2rem] bg-slate-950 p-5 text-white shadow-lg shadow-slate-300">
+            <p class="text-sm text-white/60">Current access code</p>
+            <p class="mt-3 text-center text-5xl font-black tracking-[0.25em]" id="adminCurrentCode">000000</p>
+
+            <div class="mt-5">
+                <div class="mb-2 flex items-center justify-between text-xs font-bold text-white/60">
+                    <span>Code refresh</span>
+                    <span id="codeTimerLabel">60s</span>
+                </div>
+
+                <div class="h-3 overflow-hidden rounded-full bg-white/10">
+                    <div id="codeTimerBar" class="h-full rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-300"></div>
+                </div>
+            </div>
+
+            <p class="mt-5 text-sm text-white/60">
+                Members use this code to confirm physical gym entry.
+            </p>
+        </article>
+
+        <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Today’s attendance</h3>
+            <div id="adminAttendanceList" class="space-y-3"></div>
+        </article>
+    `;
+}
+
+function renderAdminMembersPage() {
+    const page = document.getElementById("calendarPage");
+
+    if (!page || !isAdminUser()) {
+        return;
+    }
+
+    const visibleMembers = adminMembers.filter(member => member.status === "ACTIVE");
+    const activeMembers = visibleMembers.length;
+    const inactiveMembers = adminMembers.filter(member => member.status === "INACTIVE").length;
+
+    page.innerHTML = `
+        <div class="mb-4">
+            <h2 class="text-xl font-black text-slate-950">Members</h2>
+            <p class="text-sm text-slate-500">View and deactivate gym members</p>
+        </div>
+
+        <div class="mb-5 grid grid-cols-2 gap-3">
+            <article class="rounded-3xl bg-white p-4 shadow-lg shadow-violet-100">
+                <p class="text-xs font-semibold text-slate-400">Active</p>
+                <p class="mt-2 text-3xl font-black text-emerald-600">${activeMembers}</p>
+            </article>
+
+            <article class="rounded-3xl bg-white p-4 shadow-lg shadow-violet-100">
+                <p class="text-xs font-semibold text-slate-400">Inactive</p>
+                <p class="mt-2 text-3xl font-black text-rose-500">${inactiveMembers}</p>
+            </article>
+        </div>
+
+        <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">All members</h3>
+            <div id="adminMembersList" class="space-y-3"></div>
+        </article>
+    `;
+}
+
+function renderAdminSessionsPage() {
+    const page = document.getElementById("classesPage");
+
+    if (!page || !isAdminUser()) {
+        return;
+    }
+
+    page.innerHTML = `
+        <div class="mb-4">
+            <h2 class="text-xl font-black text-slate-950">Training Sessions</h2>
+            <p class="text-sm text-slate-500">Create, cancel and review session registrations</p>
+        </div>
+
+        <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Create training session</h3>
+
+            <form id="adminCreateSessionForm" class="space-y-3">
+                <input id="adminSessionTitle"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="text"
+                       placeholder="Session title">
+
+                <input id="adminTrainerName"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="text"
+                       placeholder="Trainer name">
+
+                <input id="adminStartDatetime"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="datetime-local">
+
+                <input id="adminEndDatetime"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="datetime-local">
+
+                <input id="adminCapacity"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="number"
+                       min="1"
+                       placeholder="Capacity">
+
+                <button class="w-full rounded-2xl bg-slate-950 px-4 py-4 text-sm font-black text-white"
+                        type="submit">
+                    Create session
+                </button>
+            </form>
+        </article>
+
+        <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">All sessions</h3>
+            <div id="classesList" class="space-y-4"></div>
+        </article>
+
+        <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Session registrations</h3>
+            <div id="adminSessionRegistrationsBox"
+                 class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
+                Select a session to view registrations.
+            </div>
+        </article>
+    `;
+
+    document.getElementById("adminCreateSessionForm").addEventListener("submit", createAdminSession);
+}
+
+function renderAdminManagePage() {
+    const page = document.getElementById("accountPage");
+
+    if (!page || !isAdminUser()) {
+        return;
+    }
+
+    page.innerHTML = `
+        <div class="mb-4">
+            <h2 class="text-xl font-black text-slate-950">Admin Management</h2>
+            <p class="text-sm text-slate-500">Plans, subscriptions and account actions</p>
+        </div>
+
+        <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <div class="flex items-center gap-4">
+                <div class="flex h-16 w-16 items-center justify-center rounded-3xl bg-violet-100 text-2xl font-black text-violet-700">
+                    A
+                </div>
+
+                <div>
+                    <h3 class="text-xl font-black text-slate-950">Admin User</h3>
+                    <p class="text-sm text-slate-500">${authSession?.email || ""}</p>
+                    <div class="mt-2">${getStatusBadge("ADMIN")}</div>
+                </div>
+            </div>
+        </article>
+
+        <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Create membership plan</h3>
+
+            <form id="adminCreatePlanForm" class="space-y-3">
+                <select id="adminPlanType"
+                        class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300">
+                    <option value="BASIC">BASIC</option>
+                    <option value="PREMIUM">PREMIUM</option>
+                </select>
+
+                <input id="adminPlanName"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="text"
+                       placeholder="Plan name">
+
+                <input id="adminPlanDescription"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="text"
+                       placeholder="Description">
+
+                <input id="adminPlanDuration"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="number"
+                       min="1"
+                       placeholder="Duration days">
+
+                <input id="adminPlanPrice"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="number"
+                       min="0"
+                       step="0.01"
+                       placeholder="Price">
+
+                <button class="w-full rounded-2xl bg-violet-600 px-4 py-4 text-sm font-black text-white"
+                        type="submit">
+                    Create plan
+                </button>
+            </form>
+        </article>
+
+        <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Plans</h3>
+            <div id="adminPlansList" class="space-y-3"></div>
+        </article>
+
+        <article class="mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Subscriptions</h3>
+            <div id="adminSubscriptionsList" class="space-y-3"></div>
+        </article>
+
+        <article class="rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100">
+            <h3 class="mb-4 font-black text-slate-950">Session</h3>
+            <button id="logoutButton"
+                    class="w-full rounded-2xl bg-rose-100 px-4 py-4 text-left text-sm font-black text-rose-700">
+                Logout
+            </button>
+        </article>
+    `;
+
+    document.getElementById("adminCreatePlanForm").addEventListener("submit", createAdminPlan);
+    document.getElementById("logoutButton").addEventListener("click", logout);
+}
+
 function refreshAll() {
     renderHeader();
     applyRoleVisibility();
-    renderDashboard();
-    renderCheckInPage();
-    renderCalendar();
-    renderClasses();
-    renderAccountPlans();
+
+    if (isAdminUser()) {
+        renderAdminDashboardPage();
+        renderAdminCodePage();
+        renderAdminMembersPage();
+        renderAdminSessionsPage();
+        renderAdminManagePage();
+
+        renderClasses();
+        renderAdminAttendance();
+        updateAdminCodeDisplay();
+        renderAdminMembersList();
+        renderAdminSubscriptionsList();
+        renderAdminPlansList();
+
+        return;
+    }
+
+	renderDashboard();
+	renderCheckInPage();
+	renderCalendar();
+	renderClasses();
+	renderAccountPlans();
+
+	if (isMemberUser()) {
+	    createProfileEditUi();
+	    populateProfileForm();
+	}
     renderAdminAttendance();
     updateAdminCodeDisplay();
     renderAdminSessionStats();
+    renderAdminMembersList();
+    renderAdminSubscriptionsList();
+    renderAdminPlansList();
 }
 
 function createAuthOverlay() {
@@ -1306,6 +1705,124 @@ function createLogoutButton() {
     document.getElementById("logoutButton").addEventListener("click", logout);
 }
 
+function createProfileEditUi() {
+    if (document.getElementById("profileEditCard")) {
+        return;
+    }
+
+    const accountPage = document.getElementById("accountPage");
+
+    if (!accountPage) {
+        return;
+    }
+
+    const card = document.createElement("article");
+    card.id = "profileEditCard";
+    card.className = "mb-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100";
+
+    card.innerHTML = `
+        <h3 class="mb-4 font-black text-slate-950">Edit profile</h3>
+
+        <form id="profileEditForm" class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <input id="profileName"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="text"
+                       placeholder="Name">
+
+                <input id="profileSurname"
+                       class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                       type="text"
+                       placeholder="Surname">
+            </div>
+
+            <input id="profilePhone"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="text"
+                   placeholder="Phone">
+
+            <input id="profileDateOfBirth"
+                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                   type="date">
+
+            <button class="w-full rounded-2xl bg-violet-600 px-4 py-4 text-sm font-black text-white"
+                    type="submit">
+                Save profile
+            </button>
+        </form>
+    `;
+
+    const firstProfileCard = accountPage.querySelector("article");
+
+    if (firstProfileCard && firstProfileCard.nextSibling) {
+        accountPage.insertBefore(card, firstProfileCard.nextSibling);
+    } else {
+        accountPage.appendChild(card);
+    }
+
+    document.getElementById("profileEditForm").addEventListener("submit", updateMemberProfile);
+}
+
+async function updateMemberProfile(event) {
+    event.preventDefault();
+
+    if (!isMemberUser()) {
+        showToast("Profile editing is available only for members");
+        return;
+    }
+
+    const name = document.getElementById("profileName").value.trim();
+    const surname = document.getElementById("profileSurname").value.trim();
+    const phone = document.getElementById("profilePhone").value.trim();
+    const dateOfBirth = document.getElementById("profileDateOfBirth").value;
+
+    if (!name || !surname || !phone || !dateOfBirth) {
+        showToast("Please fill all profile fields");
+        return;
+    }
+
+    const params = new URLSearchParams({
+        email: authSession.email,
+        name,
+        surname,
+        phone,
+        dateOfBirth
+    });
+
+    try {
+        await apiPut(`/api/member/profile?${params.toString()}`);
+
+        showToast("Profile updated successfully");
+
+        await loadMemberData();
+        refreshAll();
+    } catch (error) {
+        showToast(error.message || "Could not update profile");
+    }
+}
+
+function populateProfileForm() {
+    if (!currentUser || !isMemberUser()) {
+        return;
+    }
+
+    const nameInput = document.getElementById("profileName");
+    const surnameInput = document.getElementById("profileSurname");
+    const phoneInput = document.getElementById("profilePhone");
+    const dateInput = document.getElementById("profileDateOfBirth");
+
+    if (!nameInput || !surnameInput || !phoneInput || !dateInput) {
+        return;
+    }
+
+    const nameParts = currentUser.fullName ? currentUser.fullName.split(" ") : [];
+
+    nameInput.value = currentUser.firstName || nameParts[0] || "";
+    surnameInput.value = nameParts.slice(1).join(" ") || "";
+    phoneInput.value = currentUser.phone || "";
+    dateInput.value = currentUser.dateOfBirth || "";
+}
+
 async function loadAdminSessions() {
     if (!authSession || authSession.role !== "ADMIN") {
         adminSessions = [];
@@ -1370,6 +1887,367 @@ function renderAdminSessionStats() {
     }).join("");
 }
 
+function renderAdminMembersList() {
+    const list = document.getElementById("adminMembersList");
+
+    if (!list) {
+        return;
+    }
+
+    if (!isAdminUser()) {
+        list.innerHTML = "Admin access required.";
+        return;
+    }
+
+	const visibleMembers = adminMembers.filter(member =>
+	    member.status === "ACTIVE" && member.email !== authSession.email
+	);
+
+    if (!visibleMembers.length) {
+        list.innerHTML = `<p class="text-sm text-slate-500">No active members found.</p>`;
+        return;
+    }
+
+    list.innerHTML = visibleMembers.map(member => {
+        const subscription = getMemberSubscriptionSummary(member.id);
+        const activePlans = adminPlans.filter(plan => plan.active);
+
+        return `
+            <div class="rounded-2xl bg-slate-100 p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="font-black text-slate-950">${member.name} ${member.surname}</p>
+                        <p class="text-xs text-slate-500">${member.email}</p>
+                        <p class="text-xs text-slate-500">Account: ${member.status}</p>
+                        <p class="mt-1 text-xs font-bold ${subscription?.status === "ACTIVE" ? "text-emerald-600" : "text-rose-600"}">
+                            Plan: ${subscription ? `${subscription.planName} · ${subscription.status}` : "No subscription"}
+                        </p>
+                    </div>
+
+                    <button class="admin-deactivate-member-button rounded-xl bg-rose-100 px-3 py-2 text-xs font-black text-rose-700"
+                            data-member-id="${member.id}">
+                        Deactivate
+                    </button>
+                </div>
+
+                <div class="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                    <select class="admin-member-plan-select rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-700"
+                            ${activePlans.length === 0 ? "disabled" : ""}
+                            data-member-id="${member.id}">
+                        ${
+                            activePlans.length
+                                ? activePlans.map(plan => `<option value="${plan.id}">${plan.name}</option>`).join("")
+                                : `<option value="">No active plans</option>`
+                        }
+                    </select>
+
+                    <button class="admin-assign-plan-button rounded-xl px-3 py-2 text-xs font-black
+                                   ${activePlans.length === 0 ? "bg-slate-200 text-slate-400" : "bg-violet-600 text-white"}"
+                            ${activePlans.length === 0 ? "disabled" : ""}
+                            data-member-id="${member.id}"
+                            data-member-email="${member.email}">
+                        Set plan
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+async function assignPlanToMember(memberId, memberEmail) {
+    const member = adminMembers.find(item => Number(item.id) === Number(memberId));
+
+    if (!member) {
+        showToast("Member was not found");
+        return;
+    }
+
+    if (member.status === "INACTIVE") {
+        showToast("Inactive member cannot receive a new subscription");
+        return;
+    }
+
+    const select = document.querySelector(`.admin-member-plan-select[data-member-id="${memberId}"]`);
+
+    if (!select || !select.value) {
+        showToast("Please select a plan");
+        return;
+    }
+
+    const selectedPlan = adminPlans.find(plan => Number(plan.id) === Number(select.value));
+
+    if (!selectedPlan || !selectedPlan.active) {
+        showToast("Selected plan is not active");
+        return;
+    }
+
+    try {
+        await apiPost(`/api/member/subscriptions?email=${encodeURIComponent(memberEmail)}&planId=${encodeURIComponent(select.value)}`);
+
+        showToast(`Plan ${selectedPlan.name} assigned to ${member.name}`);
+
+        await reloadAdminState();
+    } catch (error) {
+        showToast(error.message || "Could not assign plan");
+    }
+}
+
+function getLatestSubscriptionsByMember() {
+    const byMember = new Map();
+
+    adminSubscriptions.forEach(subscription => {
+        const memberId = Number(subscription.memberId);
+        const existing = byMember.get(memberId);
+
+        if (!existing) {
+            byMember.set(memberId, subscription);
+            return;
+        }
+
+        const existingIsActive = existing.status === "ACTIVE";
+        const currentIsActive = subscription.status === "ACTIVE";
+
+        if (currentIsActive && !existingIsActive) {
+            byMember.set(memberId, subscription);
+            return;
+        }
+
+        if (currentIsActive === existingIsActive && Number(subscription.id || 0) > Number(existing.id || 0)) {
+            byMember.set(memberId, subscription);
+        }
+    });
+
+    return Array.from(byMember.values());
+}
+
+function getMemberNameById(memberId) {
+    const member = adminMembers.find(item => Number(item.id) === Number(memberId));
+    return member ? `${member.name} ${member.surname}` : `Member ID: ${memberId}`;
+}
+
+function renderAdminSubscriptionsList() {
+    const list = document.getElementById("adminSubscriptionsList");
+
+    if (!list) {
+        return;
+    }
+
+    if (!isAdminUser()) {
+        list.innerHTML = "Admin access required.";
+        return;
+    }
+
+    const visibleSubscriptions = getLatestSubscriptionsByMember();
+
+    if (!visibleSubscriptions.length) {
+        list.innerHTML = `<p class="text-sm text-slate-500">No subscriptions found.</p>`;
+        return;
+    }
+
+    list.innerHTML = visibleSubscriptions.map(subscription => `
+        <div class="rounded-2xl bg-slate-100 p-4">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="font-black text-slate-950">${subscription.planName}</p>
+                    <p class="text-xs text-slate-500">${getMemberNameById(subscription.memberId)}</p>
+                    <p class="text-xs text-slate-500">${subscription.startDate} → ${subscription.endDate}</p>
+                    <p class="text-xs font-bold ${subscription.status === "ACTIVE" ? "text-emerald-600" : "text-rose-600"}">
+                        Status: ${subscription.status}
+                    </p>
+                </div>
+
+                <button class="admin-cancel-subscription-button rounded-xl px-3 py-2 text-xs font-black
+                               ${subscription.status === "CANCELLED" ? "bg-slate-200 text-slate-400" : "bg-rose-100 text-rose-700"}"
+                        ${subscription.status === "CANCELLED" ? "disabled" : ""}
+                        data-subscription-id="${subscription.id}">
+                    ${subscription.status === "CANCELLED" ? "Cancelled" : "Cancel"}
+                </button>
+            </div>
+        </div>
+    `).join("");
+}
+
+function renderAdminPlansList() {
+    const list = document.getElementById("adminPlansList");
+
+    if (!list) {
+        return;
+    }
+
+    if (!isAdminUser()) {
+        list.innerHTML = "Admin access required.";
+        return;
+    }
+
+    if (!adminPlans.length) {
+        list.innerHTML = `<p class="text-sm text-slate-500">No plans found.</p>`;
+        return;
+    }
+
+    list.innerHTML = adminPlans.map(plan => `
+        <div class="rounded-2xl bg-slate-100 p-4">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="font-black text-slate-950">${plan.name}</p>
+                    <p class="text-xs text-slate-500">${plan.membershipType} · €${plan.price} · ${plan.durationDays} days</p>
+                    <p class="text-xs font-bold ${plan.active ? "text-emerald-600" : "text-rose-600"}">
+                        ${plan.active ? "Active" : "Inactive"}
+                    </p>
+                </div>
+
+                <button class="admin-toggle-plan-button rounded-xl px-3 py-2 text-xs font-black
+                               ${plan.active ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}"
+                        data-plan-id="${plan.id}">
+                    ${plan.active ? "Deactivate" : "Restore"}
+                </button>
+            </div>
+        </div>
+    `).join("");
+}
+
+async function toggleAdminPlan(planId) {
+    const plan = adminPlans.find(item => Number(item.id) === Number(planId));
+
+    if (!plan) {
+        showToast("Plan was not found");
+        return;
+    }
+
+    try {
+        if (plan.active) {
+            if (!confirm("Deactivate this membership plan?")) {
+                return;
+            }
+
+            await apiDelete(`/api/admin/plans/${encodeURIComponent(planId)}`);
+            showToast("Plan deactivated");
+        } else {
+            if (!confirm("Restore this membership plan?")) {
+                return;
+            }
+
+            await apiPut(`/api/admin/plans/${encodeURIComponent(planId)}`, {
+                membershipType: plan.membershipType,
+                name: plan.name,
+                description: plan.description,
+                durationDays: plan.durationDays,
+                price: plan.price,
+                active: true
+            });
+
+            showToast("Plan restored");
+        }
+
+        await reloadAdminState();
+    } catch (error) {
+        showToast(error.message || "Could not update plan");
+    }
+}
+
+async function createAdminPlan(event) {
+    event.preventDefault();
+
+    if (!isAdminUser()) {
+        showToast("Admin access required");
+        return;
+    }
+
+    const membershipType = document.getElementById("adminPlanType").value;
+    const name = document.getElementById("adminPlanName").value.trim();
+    const description = document.getElementById("adminPlanDescription").value.trim();
+    const durationDays = Number(document.getElementById("adminPlanDuration").value);
+    const price = Number(document.getElementById("adminPlanPrice").value);
+
+    if (!membershipType || !name || !description || !durationDays || price <= 0) {
+        showToast("Please fill all plan fields");
+        return;
+    }
+
+    try {
+        await apiPost("/api/admin/plans", {
+            membershipType,
+            name,
+            description,
+            durationDays,
+            price
+        });
+
+        showToast("Membership plan created");
+
+        document.getElementById("adminCreatePlanForm").reset();
+
+	await reloadAdminState();
+    } catch (error) {
+        showToast(error.message || "Could not create plan");
+    }
+}
+
+async function deactivateAdminMember(memberId) {
+    if (!confirm("Deactivate this member?")) {
+        return;
+    }
+
+    try {
+        await apiPut(`/api/admin/members/${encodeURIComponent(memberId)}/deactivate`);
+
+        showToast("Member deactivated");
+
+	await reloadAdminState();
+    } catch (error) {
+        showToast(error.message || "Could not deactivate member");
+    }
+}
+
+async function cancelAdminSubscription(subscriptionId) {
+    if (!confirm("Cancel this subscription?")) {
+        return;
+    }
+
+    try {
+        await apiPut(`/api/admin/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`);
+
+        showToast("Subscription cancelled");
+
+	await reloadAdminState();
+    } catch (error) {
+        showToast(error.message || "Could not cancel subscription");
+    }
+}
+
+async function deactivateAdminPlan(planId) {
+    if (!confirm("Deactivate this membership plan?")) {
+        return;
+    }
+
+    try {
+        await apiDelete(`/api/admin/plans/${encodeURIComponent(planId)}`);
+
+        showToast("Plan deactivated");
+
+        await loadAdminData();
+        await loadPublicData();
+        refreshAll();
+    } catch (error) {
+        showToast(error.message || "Could not deactivate plan");
+    }
+}
+
+async function cancelAdminSession(sessionId) {
+    if (!confirm("Cancel this training session?")) {
+        return;
+    }
+
+    try {
+        await apiDelete(`/api/admin/sessions/${encodeURIComponent(sessionId)}`);
+
+        showToast("Session cancelled");
+
+	await reloadAdminState();
+    } catch (error) {
+        showToast(error.message || "Could not cancel session");
+    }
+}
+
 async function createAdminSession(event) {
     event.preventDefault();
 
@@ -1402,14 +2280,28 @@ async function createAdminSession(event) {
 
         document.getElementById("adminCreateSessionForm").reset();
 
-        await loadAdminData();
-        await loadPublicData();
-        await loadAdminSessions();
-
-        refreshAll();
+	await reloadAdminState();
     } catch (error) {
         showToast(error.message || "Could not create session");
     }
+}
+
+function getMemberSubscriptionSummary(memberId) {
+    const memberSubscriptions = adminSubscriptions.filter(subscription =>
+        Number(subscription.memberId) === Number(memberId)
+    );
+
+    if (!memberSubscriptions.length) {
+        return null;
+    }
+
+    const activeSubscription = memberSubscriptions.find(subscription => subscription.status === "ACTIVE");
+
+    if (activeSubscription) {
+        return activeSubscription;
+    }
+
+    return memberSubscriptions[memberSubscriptions.length - 1];
 }
 
 
@@ -1439,72 +2331,17 @@ async function showAdminSessionRegistrations(sessionId) {
     }
 }
 
-function createAdminManagementUi() {
-    if (document.getElementById("adminSessionManager")) {
-        return;
-    }
+async function reloadAdminState() {
+    await loadAdminData();
+    await loadAdminSessions();
+    await loadPublicData();
+    refreshAll();
+}
 
-    const adminPage = document.getElementById("adminPage");
-
-    if (!adminPage) {
-        return;
-    }
-
-    const manager = document.createElement("article");
-    manager.id = "adminSessionManager";
-    manager.className = "mt-5 rounded-[2rem] bg-white p-5 shadow-lg shadow-violet-100";
-
-    manager.innerHTML = `
-        <h3 class="mb-4 font-black text-slate-950">Create training session</h3>
-
-        <form id="adminCreateSessionForm" class="space-y-3">
-            <input id="adminSessionTitle"
-                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                   type="text"
-                   placeholder="Session title">
-
-            <input id="adminTrainerName"
-                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                   type="text"
-                   placeholder="Trainer name">
-
-            <input id="adminStartDatetime"
-                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                   type="datetime-local">
-
-            <input id="adminEndDatetime"
-                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                   type="datetime-local">
-
-            <input id="adminCapacity"
-                   class="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                   type="number"
-                   min="1"
-                   placeholder="Capacity">
-
-            <button class="w-full rounded-2xl bg-slate-950 px-4 py-4 text-sm font-black text-white"
-                    type="submit">
-                Create session
-            </button>
-        </form>
-
-        <div class="mt-6">
-            <h3 class="mb-4 font-black text-slate-950">Session statistics</h3>
-            <div id="adminSessionStatsList" class="space-y-3"></div>
-        </div>
-
-        <div class="mt-6">
-            <h3 class="mb-4 font-black text-slate-950">Session registrations</h3>
-            <div id="adminSessionRegistrationsBox"
-                 class="rounded-2xl bg-slate-100 p-4 text-sm font-semibold text-slate-500">
-                Select a session to view registrations.
-            </div>
-        </div>
-    `;
-
-    adminPage.appendChild(manager);
-
-    document.getElementById("adminCreateSessionForm").addEventListener("submit", createAdminSession);
+async function reloadMemberState() {
+    await loadPublicData();
+    await loadMemberData();
+    refreshAll();
 }
 
 function setupEvents() {
@@ -1527,6 +2364,39 @@ function setupEvents() {
             setActivePage("admin");
             showAdminSessionRegistrations(adminStatsButton.dataset.sessionId);
         }
+
+        const deactivateMemberButton = event.target.closest(".admin-deactivate-member-button");
+
+        if (deactivateMemberButton && !deactivateMemberButton.disabled) {
+            deactivateAdminMember(deactivateMemberButton.dataset.memberId);
+        }
+
+        const cancelSubscriptionButton = event.target.closest(".admin-cancel-subscription-button");
+
+        if (cancelSubscriptionButton && !cancelSubscriptionButton.disabled) {
+            cancelAdminSubscription(cancelSubscriptionButton.dataset.subscriptionId);
+        }
+
+        const cancelSessionButton = event.target.closest(".admin-cancel-session-button");
+
+        if (cancelSessionButton && !cancelSessionButton.disabled) {
+            cancelAdminSession(cancelSessionButton.dataset.sessionId);
+        }
+
+	const assignPlanButton = event.target.closest(".admin-assign-plan-button");
+
+	if (assignPlanButton && !assignPlanButton.disabled) {
+	    assignPlanToMember(
+		assignPlanButton.dataset.memberId,
+		assignPlanButton.dataset.memberEmail
+	    );
+	}
+
+	const togglePlanButton = event.target.closest(".admin-toggle-plan-button");
+
+	if (togglePlanButton) {
+	    toggleAdminPlan(togglePlanButton.dataset.planId);
+	}
     });
 
     document.getElementById("checkinSubmitButton").addEventListener("click", processCheckIn);
@@ -1559,8 +2429,8 @@ function setupEvents() {
             switchPlan(planButton.dataset.planId, planButton.dataset.planName);
         }
     });
-    createLogoutButton();
-    createAdminManagementUi();
+   createLogoutButton();
+
 }
 
 async function initializeApp() {

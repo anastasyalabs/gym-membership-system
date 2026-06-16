@@ -83,6 +83,8 @@ public class MembershipPlanService {
             plan.setDurationDays(request.getDurationDays());
         if (request.getPrice() > 0)
             plan.setPrice(request.getPrice());
+	if (request.getActive() != null)
+	    plan.setActive(request.getActive());
 
         membershipPlanRepository.save(plan);
         return toResponse(plan);
